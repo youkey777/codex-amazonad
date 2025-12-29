@@ -1,0 +1,29 @@
+# .gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.xlsx
+*.xls
+*.csv
+*.tsv
+*.txt
+*.md
+*.log
+*.tmp
+*.bak
+*.swp
+*.db
+.DS_Store
+Thumbs.db
+_ul
+
+# OS/app metadata
+*.lnk
+*.url
+
+# Local tool artifacts
+.claude/
+1224/
+1129/
+★効率確認/
