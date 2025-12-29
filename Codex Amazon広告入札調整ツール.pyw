@@ -551,6 +551,19 @@ class AmazonBidAdjusterApp:
         text = text.replace("\u3000", " ")
         return " ".join(text.split())
 
+    def normalize_match_type(self, value):
+        text = str(value).strip()
+        if text == "":
+            return ""
+        text_upper = text.upper()
+        if text_upper in ("EXACT", "完全一致"):
+            return "完全一致"
+        if text_upper in ("PHRASE", "フレーズ"):
+            return "フレーズ"
+        if text_upper in ("BROAD", "部分一致"):
+            return "部分一致"
+        return text
+
     def is_manual_campaign(self, name):
         text = str(name).strip()
         if "マニュアル" in text:
@@ -615,6 +628,9 @@ class AmazonBidAdjusterApp:
         # まず、キャンペーンシートからtarget_acos_mapとoriginal_bid_mapを構築
         # （検索ワードシートには許容ACOSが存在しない）
         # 同時に既存キーワード/ターゲティングを収集
+        camp_match_idx = None
+        if 'マッチタイプ' in df_camp.columns:
+            camp_match_idx = df_camp.columns.get_loc('マッチタイプ')
         for _, row in df_camp.iterrows():
             kw_id = str(int(row.iloc[col['KEYWORD_ID']])) if pd.notna(row.iloc[col['KEYWORD_ID']]) else ""
             tg_id = str(int(row.iloc[col['TARGETING_ID']])) if pd.notna(row.iloc[col['TARGETING_ID']]) else ""
@@ -663,7 +679,12 @@ class AmazonBidAdjusterApp:
                         portfolio_has_manual.add(portfolio)
                         add_campaign(manual_keyword_campaigns, key, campaign_id)
                     if ad_type == "SP" and is_manual:
-                        match_type = str(row.iloc[col['MATCH_TYPE']]).strip() if pd.notna(row.iloc[col['MATCH_TYPE']]) else ""
+                        if 'MATCH_TYPE' in col:
+                            match_type = self.normalize_match_type(row.iloc[col['MATCH_TYPE']]) if pd.notna(row.iloc[col['MATCH_TYPE']]) else ""
+                        elif camp_match_idx is not None:
+                            match_type = self.normalize_match_type(row.iloc[camp_match_idx]) if pd.notna(row.iloc[camp_match_idx]) else ""
+                        else:
+                            match_type = ""
                         entity = str(row.iloc[col['ENTITY']]).strip() if pd.notna(row.iloc[col['ENTITY']]) else ""
                         if entity == "キーワード" and match_type and kw_text:
                             sp_manual_kw_targets.add((portfolio, kw_text, match_type))
@@ -694,6 +715,9 @@ class AmazonBidAdjusterApp:
         self.log(f"既存商品ターゲティング(ASIN): {len(product_target_asins)}件")
 
         # 検索ワードシートからCV情報を取得
+        search_match_idx = None
+        if 'マッチタイプ' in df_search.columns:
+            search_match_idx = df_search.columns.get_loc('マッチタイプ')
         for _, row in df_search.iterrows():
             kw_id = str(int(row.iloc[search_col['KEYWORD_ID']])) if pd.notna(row.iloc[search_col['KEYWORD_ID']]) else ""
             tg_id = str(int(row.iloc[search_col['TARGETING_ID']])) if pd.notna(row.iloc[search_col['TARGETING_ID']]) else ""
@@ -715,7 +739,12 @@ class AmazonBidAdjusterApp:
             portfolio = str(row.iloc[search_col['PORTFOLIO']]) if pd.notna(row.iloc[search_col['PORTFOLIO']]) else ""
             search_term = str(row.iloc[search_col['SEARCH_TERM']]) if pd.notna(row.iloc[search_col['SEARCH_TERM']]) else ""
             keyword_text = str(row.iloc[search_col['KEYWORD_TEXT']]).strip() if pd.notna(row.iloc[search_col['KEYWORD_TEXT']]) else ""
-            match_type = str(row.iloc[search_col['MATCH_TYPE']]).strip() if pd.notna(row.iloc[search_col['MATCH_TYPE']]) else ""
+            if 'MATCH_TYPE' in search_col:
+                match_type = self.normalize_match_type(row.iloc[search_col['MATCH_TYPE']]) if pd.notna(row.iloc[search_col['MATCH_TYPE']]) else ""
+            elif search_match_idx is not None:
+                match_type = self.normalize_match_type(row.iloc[search_match_idx]) if pd.notna(row.iloc[search_match_idx]) else ""
+            else:
+                match_type = ""
             spend = self.safe_float(row.iloc[search_col['SPEND']], 0)
             sales = self.safe_float(row.iloc[search_col['SALES']], 0)
 
@@ -998,7 +1027,7 @@ class AmazonBidAdjusterApp:
             if ad_type == "SP":
                 item = items[0]
                 keyword_text_field = self.normalize_keyword(item.get('keyword_text', ''))
-                match_type = str(item.get('match_type', '')).strip()
+                match_type = self.normalize_match_type(item.get('match_type', ''))
                 campaign_name = str(item.get('campaign_name', '')).strip()
                 is_auto_campaign = "オート" in campaign_name
                 is_keyword_case = keyword_text_field != '' and match_type != ''
@@ -1127,7 +1156,7 @@ class AmazonBidAdjusterApp:
                         else:
                             action = f"注文1件・維持"
 
-                    rec_bid = f"{rec}円"
+                    rec_bid = f"{rec}"
                     # キャンペーンシートの許容ACOSは小数形式（0.30 = 30%）
                     target_str = f"{target*100:.0f}%"
 
@@ -1135,7 +1164,7 @@ class AmazonBidAdjusterApp:
                 acos_str = f"{acos*100:.1f}%"
                 related_campaign_ids = ""
                 related_ad_group_ids = ""
-                match_type_value = str(item.get('match_type', '')).strip()
+                match_type_value = self.normalize_match_type(item.get('match_type', ''))
                 add_match_type = "完全一致" if ad_type == "SP" and keyword_text_field != '' and match_type_value != '' else ""
                 if ad_type == "SP":
                     keyword_text_field = self.normalize_keyword(item.get('keyword_text', ''))
@@ -1168,6 +1197,7 @@ class AmazonBidAdjusterApp:
                 candidate_keys.add(candidate_key)
 
                 target_type = "ASIN" if is_asin_case else "キーワード"
+                add_keyword_value = f'asin="{term_asin}"' if is_asin_case else term
                 candidates.append({
                     'カスタマー検索語': term,
                     'ポートフォリオ名': portfolio,
@@ -1180,7 +1210,7 @@ class AmazonBidAdjusterApp:
                     '広告グループID': item.get('ad_group_id', ''),
                     '広告グループ名': item.get('ad_group_name', ''),
                     '元ターゲティングID': item['id_key'],
-                    '追加キーワード(完全一致)': term,
+                    '追加キーワード(完全一致)': add_keyword_value,
                     '追加マッチタイプ': add_match_type or match_type_value,
                     'クリック数': int(item['clicks']),
                     '売上': round(item['sales']), '注文数': int(item['orders']),
